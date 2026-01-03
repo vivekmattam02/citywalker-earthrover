@@ -1,0 +1,37 @@
+name: rover
+channels:
+  - nvidia
+  - pytorch
+  - xformers
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pytorch
+  - torchvision
+  - pytorch-cuda=12.1
+  - xformers
+  - pip:
+      # CityWalker dependencies
+      - PyYAML
+      - numpy
+      - matplotlib
+      - scipy
+      - pytorch-lightning
+      - wandb
+      - decord
+      - efficientnet_pytorch
+      - omegaconf
+      # EarthRover SDK dependencies
+      - fastapi==0.111.1
+      - hypercorn==0.17.3
+      - pydantic==2.8.2
+      - pyppeteer==2.0.0
+      - python-dotenv==1.0.1
+      - requests==2.32.3
+      - aiohttp==3.9.3
+      - opencv-python-headless==4.9.0.80
+      # Integration dependencies
+      - Pillow
+      - geopy

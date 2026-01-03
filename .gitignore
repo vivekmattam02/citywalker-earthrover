@@ -1,0 +1,73 @@
+# Large model files
+models/*.ckpt
+
+# Personal learning notes (keep local)
+LEARNING.md
+models/*.pt
+models/*.pth
+*.ckpt
+*.pt
+*.pth
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Screenshots and temp files from EarthRover SDK
+earth-rovers-sdk/screenshots/
+*.png
+*.jpg
+*.jpeg
+
+# Conda
+*.conda
+
+# PyTorch Hub cache (DINOv2 will be downloaded here)
+.cache/
+
+# Results and outputs
+results/
+outputs/
