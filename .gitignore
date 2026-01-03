@@ -1,8 +1,9 @@
 # Large model files
 models/*.ckpt
 
-# Personal learning notes (keep local)
+# Personal notes (keep local)
 LEARNING.md
+NEXT_SESSION.txt
 models/*.pt
 models/*.pth
 *.ckpt
