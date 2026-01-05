@@ -22,6 +22,7 @@ from omegaconf import OmegaConf
 
 
 # Required for loading the checkpoint (it was saved with this class)
+# We need to register it in __main__ so pickle can find it
 class DictNamespace:
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
@@ -29,6 +30,11 @@ class DictNamespace:
                 setattr(self, key, DictNamespace(**value))
             else:
                 setattr(self, key, value)
+
+
+# Register DictNamespace in __main__ module so checkpoint can unpickle it
+import __main__
+__main__.DictNamespace = DictNamespace
 
 
 class CityWalkerWrapper:
