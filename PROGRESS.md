@@ -27,8 +27,8 @@
 |------|--------|-------------|
 | 2.1 | Done | Test model loading (`scripts/test_model_loading.py`) |
 | 2.2 | Done | Create `src/citywalker_wrapper.py` |
-| 2.3 | Pending | Create `src/earthrover_interface.py` |
-| 2.4 | Pending | Create `src/coordinate_utils.py` |
+| 2.3 | Done | Create `src/coordinate_utils.py` |
+| 2.4 | Pending | Create `src/earthrover_interface.py` |
 | 2.5 | Pending | Create `src/pd_controller.py` |
 | 2.6 | Pending | Create `src/navigator.py` |
 | 2.7 | Pending | Test SDK connection |
