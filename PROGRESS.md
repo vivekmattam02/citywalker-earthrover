@@ -21,17 +21,17 @@
 
 ---
 
-## Phase 2: Integration Code [In Progress]
+## Phase 2: Integration Code [Complete]
 
 | Step | Status | Description |
 |------|--------|-------------|
 | 2.1 | Done | Test model loading (`scripts/test_model_loading.py`) |
 | 2.2 | Done | Create `src/citywalker_wrapper.py` |
 | 2.3 | Done | Create `src/coordinate_utils.py` |
-| 2.4 | Pending | Create `src/earthrover_interface.py` |
-| 2.5 | Pending | Create `src/pd_controller.py` |
-| 2.6 | Pending | Create `src/navigator.py` |
-| 2.7 | Pending | Test SDK connection |
+| 2.4 | Done | Create `src/earthrover_interface.py` |
+| 2.5 | Done | Create `src/pd_controller.py` |
+| 2.6 | Done | Create `src/navigator.py` |
+| 2.7 | Pending | Test SDK connection (requires robot) |
 
 ---
 
