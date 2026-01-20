@@ -1,3 +1,9 @@
+# Documentation/explanation files (keep local)
+docs/
+HANDWRITTEN_NOTES.txt
+HOW_CITYWALKER_SEES.txt
+REPO_CRUX.txt
+
 # Large model files
 models/*.ckpt
 
