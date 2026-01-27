@@ -207,11 +207,21 @@ class VisualOdometry:
         """
         Get coordinates array formatted for CityWalker model.
 
+        CityWalker expects coordinates in ROBOT FRAME:
+            - X = forward (positive ahead of robot)
+            - Y = left (positive to robot's left)
+
+        VO World Frame (different from GPS world frame!):
+            - Origin = robot's starting position
+            - X-axis = robot's initial forward direction
+            - Y-axis = robot's initial left direction
+            - theta = accumulated rotation from initial heading
+
         Args:
-            target_x, target_y: Target position in meters
+            target_x, target_y: Target position in meters (VO world frame)
 
         Returns:
-            coordinates: (6, 2) array - 5 past positions + 1 target
+            coordinates: (6, 2) array - 5 past positions + 1 target, all in robot frame
         """
         coords = np.zeros((6, 2), dtype=np.float32)
 
@@ -228,14 +238,28 @@ class VisualOdometry:
         # Use last 5 positions
         history = history[-5:]
 
-        # Convert to relative coordinates (relative to current position)
-        for i, (hx, hy) in enumerate(history):
-            coords[i, 0] = hx - self.x
-            coords[i, 1] = hy - self.y
+        # Rotate from VO world frame to current robot frame
+        # theta = accumulated rotation since start (positive = turned left/counter-clockwise)
+        # To get to robot frame, rotate by -theta
+        cos_h = np.cos(self.theta)
+        sin_h = np.sin(self.theta)
 
-        # Target (relative to current position)
-        coords[5, 0] = target_x - self.x
-        coords[5, 1] = target_y - self.y
+        # Convert past positions to robot frame
+        for i, (hx, hy) in enumerate(history):
+            # Relative position in VO world frame
+            rel_x = hx - self.x
+            rel_y = hy - self.y
+            # Rotate by -theta to align with current robot heading
+            # Standard 2D rotation: x' = x*cos(-θ) - y*sin(-θ) = x*cos(θ) + y*sin(θ)
+            #                      y' = x*sin(-θ) + y*cos(-θ) = -x*sin(θ) + y*cos(θ)
+            coords[i, 0] = rel_x * cos_h + rel_y * sin_h
+            coords[i, 1] = -rel_x * sin_h + rel_y * cos_h
+
+        # Target in robot frame
+        rel_x = target_x - self.x
+        rel_y = target_y - self.y
+        coords[5, 0] = rel_x * cos_h + rel_y * sin_h
+        coords[5, 1] = -rel_x * sin_h + rel_y * cos_h
 
         return coords
 
@@ -251,11 +275,63 @@ class VisualOdometry:
         self.frame_count = 0
 
 
+def test_coordinate_conversion():
+    """Unit test for robot frame coordinate conversion."""
+    print("\nTesting coordinate conversion...")
+    print("-" * 40)
+
+    vo = VisualOdometry()
+
+    # Test case 1: Robot at origin, facing forward (theta=0)
+    # Target at (1, 0) world -> should be (1, 0) robot (straight ahead)
+    vo.x, vo.y, vo.theta = 0, 0, 0
+    vo.position_history = [(0, 0)] * 5
+    coords = vo.get_coordinates_for_citywalker(1.0, 0.0)
+    target_robot = coords[5]
+    assert abs(target_robot[0] - 1.0) < 0.01 and abs(target_robot[1] - 0.0) < 0.01, \
+        f"Test 1 failed: expected (1, 0), got ({target_robot[0]:.2f}, {target_robot[1]:.2f})"
+    print(f"  Test 1 PASS: Forward target -> robot frame ({target_robot[0]:.2f}, {target_robot[1]:.2f})")
+
+    # Test case 2: Robot at origin, turned 90° left (theta=π/2)
+    # Target at (1, 0) world -> should be (0, -1) robot (to the right)
+    vo.x, vo.y, vo.theta = 0, 0, np.pi / 2
+    coords = vo.get_coordinates_for_citywalker(1.0, 0.0)
+    target_robot = coords[5]
+    assert abs(target_robot[0] - 0.0) < 0.01 and abs(target_robot[1] - (-1.0)) < 0.01, \
+        f"Test 2 failed: expected (0, -1), got ({target_robot[0]:.2f}, {target_robot[1]:.2f})"
+    print(f"  Test 2 PASS: Right-side target -> robot frame ({target_robot[0]:.2f}, {target_robot[1]:.2f})")
+
+    # Test case 3: Robot at origin, turned 90° right (theta=-π/2)
+    # Target at (1, 0) world -> should be (0, 1) robot (to the left)
+    vo.x, vo.y, vo.theta = 0, 0, -np.pi / 2
+    coords = vo.get_coordinates_for_citywalker(1.0, 0.0)
+    target_robot = coords[5]
+    assert abs(target_robot[0] - 0.0) < 0.01 and abs(target_robot[1] - 1.0) < 0.01, \
+        f"Test 3 failed: expected (0, 1), got ({target_robot[0]:.2f}, {target_robot[1]:.2f})"
+    print(f"  Test 3 PASS: Left-side target -> robot frame ({target_robot[0]:.2f}, {target_robot[1]:.2f})")
+
+    # Test case 4: Robot at (2, 0), facing forward, target at (3, 1)
+    # Relative: (1, 1) -> robot frame (1, 1) - ahead and to the left
+    vo.x, vo.y, vo.theta = 2, 0, 0
+    coords = vo.get_coordinates_for_citywalker(3.0, 1.0)
+    target_robot = coords[5]
+    assert abs(target_robot[0] - 1.0) < 0.01 and abs(target_robot[1] - 1.0) < 0.01, \
+        f"Test 4 failed: expected (1, 1), got ({target_robot[0]:.2f}, {target_robot[1]:.2f})"
+    print(f"  Test 4 PASS: Offset target -> robot frame ({target_robot[0]:.2f}, {target_robot[1]:.2f})")
+
+    print("-" * 40)
+    print("All coordinate conversion tests PASSED!")
+
+
 # Quick test
 if __name__ == "__main__":
     print("Testing Visual Odometry...")
     print("=" * 50)
 
+    # First run coordinate conversion unit tests
+    test_coordinate_conversion()
+
+    print("\n" + "=" * 50)
     vo = VisualOdometry()
     print(f"Initial position: ({vo.x:.3f}, {vo.y:.3f})")
 

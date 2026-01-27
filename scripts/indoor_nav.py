@@ -236,8 +236,7 @@ def main():
             # Get first waypoint
             wp = waypoints[0]
 
-            # Compute velocities
-            controller.reset()
+            # Compute velocities (don't reset controller - need derivative history for D term)
             linear, angular = controller.compute(wp[0], wp[1])
 
             # Apply with some forward bias

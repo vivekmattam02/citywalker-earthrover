@@ -28,6 +28,7 @@ class Navigator:
     Autonomous navigation controller.
 
     Runs the main control loop: sense -> predict -> act.
+    Optionally integrates depth safety to verify/override unsafe waypoints.
     """
 
     def __init__(
@@ -37,7 +38,10 @@ class Navigator:
         arrival_prob_threshold=0.8,
         control_rate=10.0,
         step_length=0.1,
-        waypoint_index=0
+        waypoint_index=0,
+        use_depth_safety=False,
+        safety_margin=0.5,
+        depth_model_size='small'
     ):
         """
         Initialize navigator.
@@ -49,6 +53,9 @@ class Navigator:
             control_rate: Control loop frequency in Hz
             step_length: Scale factor for waypoints (robot's step length)
             waypoint_index: Which predicted waypoint to target (0 = first)
+            use_depth_safety: Enable runtime depth safety checking
+            safety_margin: Safety margin in meters (for depth safety)
+            depth_model_size: Depth model size ('small', 'base', 'large')
         """
         self.rover = rover_interface
         self.arrival_threshold = arrival_threshold
@@ -72,6 +79,19 @@ class Navigator:
             kp_angular=2.0,
             kd_angular=0.1
         )
+
+        # Depth safety layer (optional)
+        self.use_depth_safety = use_depth_safety
+        if use_depth_safety:
+            from depth_safety import DepthSafetyLayer
+            print("Loading depth safety layer...")
+            self.safety = DepthSafetyLayer(
+                model_size=depth_model_size,
+                margin=safety_margin
+            )
+        else:
+            from depth_safety import DummyDepthSafety
+            self.safety = DummyDepthSafety()
 
         # Image buffer (keep last 5 frames)
         self.context_size = self.model.get_context_size()
@@ -172,6 +192,12 @@ class Navigator:
         if self.check_arrival(arrival_prob):
             return 0.0, 0.0, waypoints, True
 
+        # Depth safety check (no-op if disabled)
+        current_frame = self.image_buffer[-1]
+        waypoints, was_overridden = self.safety.check_waypoints(
+            current_frame, waypoints
+        )
+
         # Compute velocity commands
         linear, angular = self.controller.compute_from_waypoints(
             waypoints, self.waypoint_index, self.dt
@@ -240,8 +266,13 @@ class Navigator:
                     distance = self.transformer.get_distance_to_target(
                         target_lat, target_lon
                     )
+                    safety_stats = self.safety.get_stats()
+                    safety_info = ""
+                    if self.use_depth_safety:
+                        safety_info = (f", overrides={safety_stats['total_overrides']}"
+                                       f", clearance={safety_stats['forward_clearance'] or 0:.1f}m")
                     print(f"Step {self.step_count}: dist={distance:.1f}m, "
-                          f"vel=({linear:.2f}, {angular:.2f})")
+                          f"vel=({linear:.2f}, {angular:.2f}){safety_info}")
 
                 # Maintain control rate
                 loop_time = time.time() - loop_start
@@ -340,6 +371,10 @@ if __name__ == "__main__":
     parser.add_argument("--target-lat", type=float, help="Target latitude")
     parser.add_argument("--target-lon", type=float, help="Target longitude")
     parser.add_argument("--dry-run", action="store_true", help="Run without robot")
+    parser.add_argument("--depth-safety", action="store_true",
+                        help="Enable runtime depth safety checking")
+    parser.add_argument("--safety-margin", type=float, default=0.5,
+                        help="Safety margin in meters (default 0.5)")
 
     args = parser.parse_args()
 

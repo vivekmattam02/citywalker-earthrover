@@ -72,23 +72,48 @@ def rotate_to_robot_frame(x, y, heading):
     """
     Rotate coordinates from world frame to robot frame.
 
-    Robot frame: X is forward, Y is left.
-    Heading: Robot's orientation in radians (0 = North, positive = clockwise)
+    World frame (GPS/map convention):
+        - X = East (positive toward East)
+        - Y = North (positive toward North)
+
+    Robot frame:
+        - X = Forward (positive ahead of robot)
+        - Y = Left (positive to robot's left)
+
+    Heading convention (compass style):
+        - 0 = North (robot facing North)
+        - π/2 = East (robot facing East)
+        - π = South
+        - Positive = clockwise rotation
 
     Args:
-        x, y: Coordinates in world frame (X=East, Y=North)
-        heading: Robot heading in radians
+        x, y: Coordinates in world frame (X=East, Y=North) in meters
+        heading: Robot heading in radians (0=North, positive=clockwise)
 
     Returns:
-        (x_robot, y_robot) in robot's local frame
-    """
-    # Rotate by negative heading to align with robot
-    cos_h = math.cos(-heading)
-    sin_h = math.sin(-heading)
+        (x_robot, y_robot) in robot's local frame (X=forward, Y=left) in meters
 
-    # Also swap axes: world Y (North) becomes robot X (forward)
-    x_robot = y * cos_h - x * sin_h
-    y_robot = -(y * sin_h + x * cos_h)
+    Example:
+        Robot facing North (heading=0), point 1m East of robot:
+        >>> rotate_to_robot_frame(1, 0, 0)
+        (0, -1)  # Point is to the right (negative Y in robot frame)
+
+        Robot facing East (heading=π/2), point 1m East of robot:
+        >>> rotate_to_robot_frame(1, 0, math.pi/2)
+        (1, 0)  # Point is directly ahead
+    """
+    # Robot's forward direction in world frame: (sin(heading), cos(heading))
+    # Robot's left direction in world frame: (-cos(heading), sin(heading))
+    #
+    # To convert world point to robot frame:
+    # x_robot = dot((x, y), forward) = x*sin(h) + y*cos(h)
+    # y_robot = dot((x, y), left) = -x*cos(h) + y*sin(h)
+
+    sin_h = math.sin(heading)
+    cos_h = math.cos(heading)
+
+    x_robot = x * sin_h + y * cos_h
+    y_robot = -x * cos_h + y * sin_h
 
     return x_robot, y_robot
 
@@ -229,9 +254,58 @@ class CoordinateTransformer:
         return self.initialized
 
 
+def test_rotate_to_robot_frame():
+    """Unit test for rotate_to_robot_frame function."""
+    print("\nTesting rotate_to_robot_frame...")
+    print("-" * 40)
+
+    # Test case 1: Robot facing North (heading=0), point 1m East
+    # Should be to the right of robot -> (0, -1) in robot frame
+    x_r, y_r = rotate_to_robot_frame(1, 0, 0)
+    assert abs(x_r - 0) < 0.01 and abs(y_r - (-1)) < 0.01, \
+        f"Test 1 failed: expected (0, -1), got ({x_r:.2f}, {y_r:.2f})"
+    print(f"  Test 1 PASS: Facing North, point East -> ({x_r:.2f}, {y_r:.2f})")
+
+    # Test case 2: Robot facing North (heading=0), point 1m North
+    # Should be ahead of robot -> (1, 0) in robot frame
+    x_r, y_r = rotate_to_robot_frame(0, 1, 0)
+    assert abs(x_r - 1) < 0.01 and abs(y_r - 0) < 0.01, \
+        f"Test 2 failed: expected (1, 0), got ({x_r:.2f}, {y_r:.2f})"
+    print(f"  Test 2 PASS: Facing North, point North -> ({x_r:.2f}, {y_r:.2f})")
+
+    # Test case 3: Robot facing East (heading=π/2), point 1m East
+    # Should be ahead of robot -> (1, 0) in robot frame
+    x_r, y_r = rotate_to_robot_frame(1, 0, math.pi/2)
+    assert abs(x_r - 1) < 0.01 and abs(y_r - 0) < 0.01, \
+        f"Test 3 failed: expected (1, 0), got ({x_r:.2f}, {y_r:.2f})"
+    print(f"  Test 3 PASS: Facing East, point East -> ({x_r:.2f}, {y_r:.2f})")
+
+    # Test case 4: Robot facing East (heading=π/2), point 1m North
+    # Should be to the left of robot -> (0, 1) in robot frame
+    x_r, y_r = rotate_to_robot_frame(0, 1, math.pi/2)
+    assert abs(x_r - 0) < 0.01 and abs(y_r - 1) < 0.01, \
+        f"Test 4 failed: expected (0, 1), got ({x_r:.2f}, {y_r:.2f})"
+    print(f"  Test 4 PASS: Facing East, point North -> ({x_r:.2f}, {y_r:.2f})")
+
+    # Test case 5: Robot facing South (heading=π), point 1m North
+    # Should be behind robot -> (-1, 0) in robot frame
+    x_r, y_r = rotate_to_robot_frame(0, 1, math.pi)
+    assert abs(x_r - (-1)) < 0.01 and abs(y_r - 0) < 0.01, \
+        f"Test 5 failed: expected (-1, 0), got ({x_r:.2f}, {y_r:.2f})"
+    print(f"  Test 5 PASS: Facing South, point North -> ({x_r:.2f}, {y_r:.2f})")
+
+    print("-" * 40)
+    print("All rotate_to_robot_frame tests PASSED!")
+
+
 # Quick test if run directly
 if __name__ == "__main__":
     print("Testing CoordinateTransformer...")
+
+    # First run unit tests
+    test_rotate_to_robot_frame()
+
+    print("\n" + "=" * 50)
 
     # Create transformer
     transformer = CoordinateTransformer(history_size=5)
@@ -249,7 +323,7 @@ if __name__ == "__main__":
         transformer.update(lat, lon, heading)
         print(f"Update {i+1}: lat={lat:.4f}, ready={transformer.is_ready()}")
 
-    # Set a target 50 meters ahead
+    # Set a target 50 meters ahead (north of robot, which is facing north)
     target_lat = start_lat + 0.0005
     target_lon = start_lon
 
@@ -263,5 +337,11 @@ if __name__ == "__main__":
     for i, (x, y) in enumerate(coords):
         label = f"Past {i+1}" if i < 5 else "Target"
         print(f"  {label}: x={x:.2f}m, y={y:.2f}m")
+
+    # Verify target is ahead (positive X)
+    target_x, target_y = coords[5]
+    assert target_x > 0, f"Target should be ahead (positive X), got x={target_x:.2f}"
+    assert abs(target_y) < 1, f"Target should be roughly centered, got y={target_y:.2f}"
+    print(f"\nVerification: Target is ahead and centered. PASS!")
 
     print("\nCoordinate utils test passed!")

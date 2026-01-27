@@ -178,8 +178,7 @@ class AutonomousNavigator:
         # Get first waypoint
         wp = waypoints[0]
 
-        # Compute motor commands
-        self.controller.reset()
+        # Compute motor commands (don't reset controller - need derivative history for D term)
         linear, angular = self.controller.compute(wp[0], wp[1])
 
         # Safety scaling
