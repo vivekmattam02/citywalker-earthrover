@@ -100,8 +100,7 @@ def main(move_robot=False, num_steps=20):
             # Get first waypoint
             wp = waypoints[0]
 
-            # Compute motor commands
-            controller.reset()
+            # Compute motor commands (don't reset - need D term history)
             linear, angular = controller.compute(wp[0], wp[1])
 
             total_time = time.time() - step_start

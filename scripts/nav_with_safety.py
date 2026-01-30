@@ -231,9 +231,8 @@ def run_indoor(args):
             # DEPTH SAFETY CHECK
             safe_waypoints, was_overridden = safety.check_waypoints(frame, waypoints)
 
-            # Use safe waypoint for control
+            # Use safe waypoint for control (don't reset - need D term history)
             wp = safe_waypoints[0]
-            controller.reset()
             linear, angular = controller.compute(wp[0], wp[1])
 
             # Scale velocities
@@ -343,9 +342,8 @@ def run_outdoor(args):
             # DEPTH SAFETY CHECK
             safe_waypoints, was_overridden = safety.check_waypoints(frame, waypoints)
 
-            # Control
+            # Control (don't reset - need D term history)
             wp = safe_waypoints[0]
-            controller.reset()
             linear, angular = controller.compute(wp[0], wp[1])
 
             # Scale and apply caution for overrides

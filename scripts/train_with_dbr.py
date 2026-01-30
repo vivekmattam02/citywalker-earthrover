@@ -242,7 +242,7 @@ class CityWalkerDBRTrainer:
         step_scale = batch['step_scale'].to(self.device)
 
         # Forward pass
-        waypoints_pred, arrival_logits, _, _ = self.model(images, coordinates)
+        waypoints_pred, arrival_logits, _, _ = self.model(images, coordinates, future_obs=None)
 
         # Standard CityWalker losses
         wp_loss = self.waypoint_loss_fn(waypoints_pred, gt_waypoints)
@@ -288,7 +288,7 @@ class CityWalkerDBRTrainer:
         depth_map = batch['depth_map'].to(self.device)
         step_scale = batch['step_scale'].to(self.device)
 
-        waypoints_pred, arrival_logits, _, _ = self.model(images, coordinates)
+        waypoints_pred, arrival_logits, _, _ = self.model(images, coordinates, future_obs=None)
 
         wp_loss = self.waypoint_loss_fn(waypoints_pred, gt_waypoints)
 

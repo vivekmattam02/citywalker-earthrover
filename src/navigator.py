@@ -381,5 +381,14 @@ if __name__ == "__main__":
     if args.dry_run or (args.target_lat is None and args.target_lon is None):
         dry_run_test()
     else:
-        print("Real robot navigation requires EarthRover interface (Step 2)")
-        print("Use --dry-run for testing without robot")
+        from earthrover_interface import EarthRoverInterface
+        rover = EarthRoverInterface()
+        if not rover.connect():
+            print("Cannot connect to robot. Use --dry-run for testing.")
+            exit(1)
+        nav = Navigator(
+            rover_interface=rover,
+            use_depth_safety=args.depth_safety,
+            safety_margin=args.safety_margin
+        )
+        nav.run(args.target_lat, args.target_lon)

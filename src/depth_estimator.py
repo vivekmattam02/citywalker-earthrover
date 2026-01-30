@@ -156,6 +156,8 @@ class DepthEstimator:
         Returns:
             depth_maps: numpy array (N, H, W) with depth in meters
         """
+        target_h, target_w = images.shape[1], images.shape[2]
+
         batch_tensors = []
         for img in images:
             batch_tensors.append(self._preprocess(img).squeeze(0))
@@ -165,7 +167,17 @@ class DepthEstimator:
         with torch.no_grad():
             depths = self.model(batch)
 
-        return depths.cpu().numpy()
+        depths = depths.cpu().numpy()
+
+        # Resize to match input dimensions if needed
+        if depths.shape[1] != target_h or depths.shape[2] != target_w:
+            resized = np.zeros((depths.shape[0], target_h, target_w), dtype=depths.dtype)
+            for i in range(depths.shape[0]):
+                resized[i] = np.array(Image.fromarray(depths[i]).resize(
+                    (target_w, target_h), Image.BILINEAR))
+            depths = resized
+
+        return depths
 
     def _preprocess(self, image):
         """Preprocess image for model input."""
