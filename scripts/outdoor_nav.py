@@ -54,7 +54,7 @@ class OutdoorNavigator:
 
         if not dry_run:
             print("\n[2] Connecting to robot...")
-            self.rover = EarthRoverInterface()
+            self.rover = EarthRoverInterface(timeout=30.0)  # Longer timeout for Puppeteer initialization
             if not self.rover.connect():
                 raise RuntimeError("Failed to connect to robot. Is SDK server running?")
         else:
@@ -66,9 +66,11 @@ class OutdoorNavigator:
 
         print("\n[4] Initializing controller...")
         self.controller = PDController(
-            kp_linear=0.8,
-            kp_angular=1.5,
-            kd_angular=0.1
+            kp_linear=1.5,    # More aggressive for outdoor
+            kp_angular=2.0,
+            kd_angular=0.1,
+            max_linear=0.7,   # Allow faster speeds
+            max_angular=0.7
         )
 
         # Image buffer for CityWalker (needs 5 frames)
@@ -83,6 +85,10 @@ class OutdoorNavigator:
         self.stuck_threshold = 30
         self.stuck_counter = 0
         self.last_distance = float('inf')
+        
+        # Heading filter (GPS heading is very noisy)
+        self.heading_history = []
+        self.heading_filter_size = 10  # Average last 10 readings
 
         print("\nOutdoorNavigator ready!")
 
@@ -103,10 +109,11 @@ class OutdoorNavigator:
         print("=" * 60)
 
         try:
-            lat, lon, heading = self.rover.get_pose()
+            lat, lon, heading_rad = self.rover.get_pose()  # Returns radians!
+            heading_deg = np.degrees(heading_rad) if heading_rad else 0
             print(f"\nLatitude:  {lat}")
             print(f"Longitude: {lon}")
-            print(f"Heading:   {heading:.1f} degrees")
+            print(f"Heading:   {heading_deg:.1f} degrees")
             print(f"\nGoogle Maps: https://maps.google.com/?q={lat},{lon}")
         except Exception as e:
             print(f"Error getting GPS: {e}")
@@ -167,8 +174,22 @@ class OutdoorNavigator:
 
         # Get GPS position
         try:
-            lat, lon, heading_deg = self.rover.get_pose()
-            heading_rad = np.radians(heading_deg)
+            lat, lon, raw_heading_rad = self.rover.get_pose()  # get_pose already returns radians!
+            
+            # Filter the heading (GPS heading is VERY noisy)
+            if raw_heading_rad is not None:
+                self.heading_history.append(raw_heading_rad)
+                if len(self.heading_history) > self.heading_filter_size:
+                    self.heading_history.pop(0)
+                
+                # Average the headings (handle wrap-around using sin/cos)
+                sin_sum = sum(np.sin(h) for h in self.heading_history)
+                cos_sum = sum(np.cos(h) for h in self.heading_history)
+                heading_rad = np.arctan2(sin_sum, cos_sum)
+            else:
+                heading_rad = 0.0
+            
+            heading_deg = np.degrees(heading_rad)  # For display only
         except Exception as e:
             return {'success': False, 'reason': f'gps_error: {e}'}
 
@@ -224,31 +245,54 @@ class OutdoorNavigator:
 
         # Get coordinates for CityWalker (in robot's local frame)
         coords = self.transformer.get_model_input(self.target_lat, self.target_lon)
+        target_coord = coords[5]  # Last one is target
 
-        # Run model
+        # Run model with proper normalization (step_scale=0.3m from training)
         images = np.stack(self.image_buffer, axis=0)
-        waypoints, arrival_prob = self.model.predict(images, coords, step_length=1.0)
+        waypoints, arrival_prob = self.model.predict(images, coords, step_scale=0.3)
 
-        # Get first waypoint
+        # Get first waypoint from CityWalker
         wp = waypoints[0]
-
-        # Compute motor commands (don't reset - need D term history)
-        linear, angular = self.controller.compute(wp[0], wp[1])
-
-        # Safety scaling
-        safe_linear = np.clip(linear * 0.5, 0.1, 0.4)  # 10-40% speed
-        safe_angular = np.clip(angular * 0.5, -0.5, 0.5)
+        
+        # CityWalker waypoints are very small (centimeters) but direction is correct
+        # Use the TARGET direction to drive, modulated by CityWalker's suggestion
+        
+        # Target direction (in robot frame)
+        target_x, target_y = target_coord[0], target_coord[1]
+        target_angle = np.arctan2(target_y, target_x)  # Angle to target
+        
+        # CityWalker waypoint direction
+        wp_angle = np.arctan2(wp[1], wp[0]) if (abs(wp[0]) > 0.001 or abs(wp[1]) > 0.001) else 0
+        
+        # Blend: mostly follow target, but let CityWalker adjust for obstacles
+        # If CityWalker says "go left" relative to target, we turn left a bit
+        angle_diff = wp_angle - target_angle  # How much CityWalker deviates from direct path
+        
+        # Angular velocity: turn toward target, with CityWalker adjustment
+        angular = -target_angle * 1.5 + angle_diff * 0.5  # Negative because positive Y is left
+        angular = np.clip(angular, -0.7, 0.7)
+        
+        # Linear velocity: go forward if roughly facing the target
+        if abs(target_angle) < np.pi/2:  # Target is ahead
+            linear = 0.5  # Fixed forward speed
+        else:  # Target is behind
+            linear = 0.2  # Slow while turning
+            
+        # Reduce speed if turning hard
+        if abs(angular) > 0.4:
+            linear *= 0.5
 
         # Send to robot
-        self.rover.send_control(safe_linear, safe_angular)
+        self.rover.send_control(linear, angular)
 
         return {
             'success': True,
             'position': (lat, lon),
             'heading': heading_deg,
             'distance': distance,
+            'target_local': (target_coord[0], target_coord[1]),
             'waypoint': (wp[0], wp[1]),
-            'velocity': (safe_linear, safe_angular),
+            'velocity': (linear, angular),
             'arrival_prob': arrival_prob
         }
 
@@ -315,15 +359,18 @@ class OutdoorNavigator:
                     return True
 
                 # Print status
-                if step_count % 10 == 0:  # Every 10 steps
+                if step_count % 20 == 0:  # Every 20 steps (~1 second)
                     pos = status.get('position', (0, 0))
                     dist = status.get('distance', 0)
                     vel = status.get('velocity', (0, 0))
                     heading = status.get('heading', 0)
-                    print(f"\rGPS: ({pos[0]:.6f}, {pos[1]:.6f})  "
-                          f"Dist: {dist:.1f}m  "
-                          f"Heading: {heading:.0f}°  "
-                          f"Time: {elapsed:.0f}s   ", end="", flush=True)
+                    target = status.get('target_local', (0, 0))
+                    wp = status.get('waypoint', (0, 0))
+                    print(f"\r[{elapsed:.0f}s] Dist: {dist:.1f}m | "
+                          f"Heading: {heading:.0f}° | "
+                          f"Target: ({target[0]:.1f}, {target[1]:.1f})m | "
+                          f"WP: ({wp[0]:.2f}, {wp[1]:.2f})m | "
+                          f"Vel: ({vel[0]:.2f}, {vel[1]:.2f})   ", end="", flush=True)
 
                 # Small delay
                 time.sleep(0.05)
@@ -375,15 +422,16 @@ def main():
 
     # Show GPS mode
     if args.show_gps:
-        rover = EarthRoverInterface()
+        rover = EarthRoverInterface(timeout=30.0)  # Longer timeout for Puppeteer initialization
         if rover.connect():
-            lat, lon, heading = rover.get_pose()
+            lat, lon, heading_rad = rover.get_pose()  # Returns radians!
+            heading_deg = np.degrees(heading_rad) if heading_rad else 0
             print("\n" + "=" * 60)
             print("CURRENT GPS POSITION")
             print("=" * 60)
             print(f"\nLatitude:  {lat}")
             print(f"Longitude: {lon}")
-            print(f"Heading:   {heading:.1f} degrees")
+            print(f"Heading:   {heading_deg:.1f} degrees")
             print(f"\nGoogle Maps: https://maps.google.com/?q={lat},{lon}")
             print("\nUse this as reference to set your target!")
         return
@@ -437,7 +485,7 @@ def main():
             images = np.stack(nav.image_buffer, axis=0)
 
             start = time.time()
-            waypoints, arrival_prob = nav.model.predict(images, coords)
+            waypoints, arrival_prob = nav.model.predict(images, coords, step_scale=0.3)
             inference_time = time.time() - start
 
             print(f"\nInference time: {inference_time*1000:.1f}ms")

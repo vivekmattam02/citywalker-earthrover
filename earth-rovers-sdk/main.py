@@ -88,6 +88,11 @@ class AuthResponse(BaseModel):
 # In-memory storage for the response
 auth_response_data = {}
 checkpoints_list_data = {}
+# Simple data cache for direct API access (no Puppeteer needed)
+simple_data_cache = {"last_update": 0}
+simple_frame_cache = {"last_update": 0, "frame": None}
+# Pending control command for JavaScript to pick up and send via RTM
+pending_control = {"command": None, "timestamp": 0}
 
 app.mount("/static", StaticFiles(directory="./static"), name="static")
 
@@ -445,9 +450,71 @@ async def get_screenshot(view_types: str = "rear,map,front"):
 
 @app.get("/data")
 async def get_data():
-    await need_start_mission()
-    data = await browser_service.data()
-    return JSONResponse(content=data)
+    # Try simple cache first (no Puppeteer)
+    global simple_data_cache
+    import time
+    if simple_data_cache.get("last_update", 0) > time.time() - 2.0:
+        # Use cached data if less than 2 seconds old
+        return JSONResponse(content=simple_data_cache)
+    
+    # NO Puppeteer - only use cached data from browser JavaScript
+    # If no cached data, return error
+    raise HTTPException(
+        status_code=503, 
+        detail="No robot data available. Make sure browser is open at http://localhost:8000/sdk"
+    )
+
+@app.post("/api/update_data")
+async def update_data(request: Request):
+    """Simple endpoint for JavaScript to push data (no Puppeteer needed)"""
+    global simple_data_cache
+    import time
+    data = await request.json()
+    data["last_update"] = time.time()
+    simple_data_cache = data
+    return JSONResponse(content={"status": "ok"})
+
+@app.post("/api/update_frame")
+async def update_frame(request: Request):
+    """Simple endpoint for JavaScript to push camera frames (no Puppeteer needed)"""
+    global simple_frame_cache
+    import time
+    data = await request.json()
+    simple_frame_cache = {
+        "frame": data.get("frame"),
+        "last_update": time.time()
+    }
+    return JSONResponse(content={"status": "ok"})
+
+
+@app.post("/api/set_control")
+async def set_control(request: Request):
+    """Set a control command for JavaScript to pick up and send via RTM"""
+    global pending_control
+    import time
+    data = await request.json()
+    command = data.get("command")
+    if command:
+        pending_control = {
+            "command": command,
+            "timestamp": time.time()
+        }
+        return JSONResponse(content={"status": "ok", "command": command})
+    raise HTTPException(status_code=400, detail="No command provided")
+
+
+@app.get("/api/get_control")
+async def get_control():
+    """Get pending control command (JavaScript polls this)"""
+    global pending_control
+    import time
+    # Only return command if it's fresh (< 0.5 seconds old)
+    if pending_control.get("command") and pending_control.get("timestamp", 0) > time.time() - 0.5:
+        cmd = pending_control["command"]
+        # Clear the command after retrieving
+        pending_control = {"command": None, "timestamp": 0}
+        return JSONResponse(content={"command": cmd})
+    return JSONResponse(content={"command": None})
 
 
 @app.post("/checkpoint-reached")
@@ -588,16 +655,26 @@ if __name__ == "__main__":
 
 @app.get("/v2/front")
 async def get_front_frame():
-    await need_start_mission()
-    front_frame = await browser_service.front()
-    response_data = {}
-    if front_frame:
-        _, base64_data = front_frame.split(",", 1)
-        response_data["front_frame"] = base64_data
-        response_data["timestamp"] = datetime.utcnow().timestamp()
+    # ONLY use cached frames from browser JavaScript - NO Puppeteer
+    global simple_frame_cache
+    import time
+    
+    frame_data = simple_frame_cache.get("frame")
+    last_update = simple_frame_cache.get("last_update", 0)
+    age = time.time() - last_update
+    
+    if frame_data and age < 5.0:  # Accept frames up to 5 seconds old
+        response_data = {
+            "front_frame": frame_data,
+            "timestamp": datetime.utcnow().timestamp()
+        }
         return JSONResponse(content=response_data)
-    else:
-        raise HTTPException(status_code=404, detail="Front frame not available")
+    
+    # No cached frame available - tell user to open browser
+    raise HTTPException(
+        status_code=503, 
+        detail=f"No camera frame available. Make sure browser is open at http://localhost:8000/sdk and video is visible. Frame age: {age:.1f}s"
+    )
 
 
 @app.get("/v2/rear")

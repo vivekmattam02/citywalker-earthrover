@@ -83,7 +83,7 @@ class CityWalkerWrapper:
 
         print("Model loaded successfully!")
 
-    def predict(self, images, coordinates, step_length=1.0):
+    def predict(self, images, coordinates, step_scale=0.3):
         """
         Run inference on the model.
 
@@ -97,11 +97,12 @@ class CityWalkerWrapper:
                 - torch tensor of shape (6, 2)
                 All positions are (x, y) in meters, relative to current robot position.
 
-            step_length: Scale factor for waypoints. Default 1.0 returns normalized values.
-                Set to robot's average step length (e.g., 0.1 meters) for real-world values.
+            step_scale: The normalization scale (average step length from training data).
+                Default 0.3 meters (typical walking stride at 5Hz).
+                Input coords are divided by this, output waypoints are multiplied by this.
 
         Returns:
-            waypoints: numpy array of shape (5, 2) - 5 future (x, y) positions
+            waypoints: numpy array of shape (5, 2) - 5 future (x, y) positions in METERS
             arrived: float between 0 and 1 - probability that we've reached the goal
         """
         # Convert images to tensor if needed
@@ -115,6 +116,9 @@ class CityWalkerWrapper:
         if isinstance(coordinates, np.ndarray):
             coordinates = torch.from_numpy(coordinates).float()
 
+        # NORMALIZE input coordinates (model was trained with normalized coords)
+        coordinates = coordinates / step_scale
+
         # Add batch dimension
         images = images.unsqueeze(0)  # (1, N, 3, H, W)
         coordinates = coordinates.unsqueeze(0)  # (1, 6, 2)
@@ -127,9 +131,9 @@ class CityWalkerWrapper:
         with torch.no_grad():
             waypoints, arrival_logits, _, _ = self.model(images, coordinates, future_obs=None)
 
-        # Process outputs
+        # Process outputs - DE-NORMALIZE waypoints to get meters
         waypoints = waypoints[0].cpu().numpy()  # (5, 2)
-        waypoints = waypoints * step_length  # Scale to real-world units
+        waypoints = waypoints * step_scale  # Convert back to meters
 
         arrival_prob = torch.sigmoid(arrival_logits[0]).item()  # Scalar 0-1
 

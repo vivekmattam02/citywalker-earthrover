@@ -226,7 +226,7 @@ def run_indoor(args):
 
             # Predict waypoints
             images = np.stack(image_buffer, axis=0)
-            waypoints, arrival_prob = model.predict(images, coords, step_length=1.0)
+            waypoints, arrival_prob = model.predict(images, coords, step_scale=0.3)
 
             # DEPTH SAFETY CHECK
             safe_waypoints, was_overridden = safety.check_waypoints(frame, waypoints)
@@ -332,7 +332,7 @@ def run_outdoor(args):
             images = np.stack(image_buffer, axis=0)
 
             # Predict
-            waypoints, arrival_prob = model.predict(images, coords, step_length=0.1)
+            waypoints, arrival_prob = model.predict(images, coords, step_scale=0.3)
 
             if arrival_prob > 0.8:
                 rover.stop()
@@ -400,7 +400,7 @@ def run_dry():
         coords = np.random.randn(6, 2).astype(np.float32) * 0.1
 
         # Predict
-        waypoints, arrival_prob = model.predict(images, coords, step_length=0.1)
+        waypoints, arrival_prob = model.predict(images, coords, step_scale=0.3)
 
         # Safety check
         safe_waypoints, was_overridden = safety.check_waypoints(frame, waypoints)

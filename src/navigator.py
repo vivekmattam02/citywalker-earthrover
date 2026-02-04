@@ -37,7 +37,7 @@ class Navigator:
         arrival_threshold=2.0,
         arrival_prob_threshold=0.8,
         control_rate=10.0,
-        step_length=0.1,
+        step_scale=0.3,
         waypoint_index=0,
         use_depth_safety=False,
         safety_margin=0.5,
@@ -51,7 +51,7 @@ class Navigator:
             arrival_threshold: Distance in meters to consider arrived
             arrival_prob_threshold: Model confidence threshold for arrival
             control_rate: Control loop frequency in Hz
-            step_length: Scale factor for waypoints (robot's step length)
+            step_scale: Normalization scale in meters (0.3 = walking stride at 5Hz)
             waypoint_index: Which predicted waypoint to target (0 = first)
             use_depth_safety: Enable runtime depth safety checking
             safety_margin: Safety margin in meters (for depth safety)
@@ -62,7 +62,7 @@ class Navigator:
         self.arrival_prob_threshold = arrival_prob_threshold
         self.control_rate = control_rate
         self.dt = 1.0 / control_rate
-        self.step_length = step_length
+        self.step_scale = step_scale
         self.waypoint_index = waypoint_index
 
         # Load model
@@ -185,7 +185,7 @@ class Navigator:
 
         # Run model
         waypoints, arrival_prob = self.model.predict(
-            images, coords, step_length=self.step_length
+            images, coords, step_scale=self.step_scale
         )
 
         # Check if arrived

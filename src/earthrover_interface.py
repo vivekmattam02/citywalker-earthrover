@@ -207,7 +207,7 @@ class EarthRoverInterface:
 
     def send_control(self, linear, angular, lamp=0):
         """
-        Send velocity command to the robot.
+        Send velocity command to the robot via JavaScript RTM relay.
 
         Args:
             linear: Forward/backward speed (-1 to 1)
@@ -223,8 +223,9 @@ class EarthRoverInterface:
         lamp = int(lamp)
 
         try:
+            # Use the new API endpoint that JavaScript polls
             response = requests.post(
-                f"{self.base_url}/control",
+                f"{self.base_url}/api/set_control",
                 json={
                     "command": {
                         "linear": linear,
@@ -232,7 +233,7 @@ class EarthRoverInterface:
                         "lamp": lamp
                     }
                 },
-                timeout=self.timeout
+                timeout=2.0  # Short timeout since this just sets a value
             )
 
             return response.status_code == 200

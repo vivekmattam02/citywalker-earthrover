@@ -173,7 +173,7 @@ class AutonomousNavigator:
 
         # Run model
         images = np.stack(self.image_buffer, axis=0)
-        waypoints, arrival_prob = self.model.predict(images, coords, step_length=1.0)
+        waypoints, arrival_prob = self.model.predict(images, coords, step_scale=0.3)
 
         # Get first waypoint
         wp = waypoints[0]

@@ -28,9 +28,9 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from citywalker_wrapper import CityWalkerWrapper
-from earthrover_interface import EarthRoverInterface
 from pd_controller import PDController
 from visual_odometry import VisualOdometry
+from earthrover_interface import EarthRoverInterface
 
 # Global control
 current_direction = "stop"  # forward, left, right, stop
@@ -43,7 +43,7 @@ def get_target_from_direction(direction: str, current_x: float, current_y: float
     Convert direction command to absolute target coordinates.
 
     Args:
-        direction: "forward", "left", "right", or "stop"
+        direction: "forward", "left", "right", "backward", or "stop"
         current_x, current_y: Current position in meters
         heading: Current heading in radians
 
@@ -59,9 +59,11 @@ def get_target_from_direction(direction: str, current_x: float, current_y: float
     if direction == "forward":
         angle = heading
     elif direction == "left":
-        angle = heading + 0.4  # ~23 degrees left
+        angle = heading + 1.2  # ~70 degrees left (stronger turn)
     elif direction == "right":
-        angle = heading - 0.4  # ~23 degrees right
+        angle = heading - 1.2  # ~70 degrees right (stronger turn)
+    elif direction == "backward":
+        angle = heading + np.pi  # 180 degrees - go backward
     else:
         return current_x, current_y
 
@@ -77,9 +79,10 @@ def keyboard_listener():
 
     print("\nControls:")
     print("  W = Forward")
-    print("  A = Left")
-    print("  D = Right")
-    print("  S = Stop")
+    print("  A = Turn Left")
+    print("  D = Turn Right")
+    print("  S = Backward")
+    print("  X = Stop")
     print("  R = Reset position")
     print("  Q = Quit")
     print("-" * 40)
@@ -103,6 +106,9 @@ def keyboard_listener():
                     current_direction = "right"
                     print("\r>> RIGHT        ", end="", flush=True)
                 elif char == 's':
+                    current_direction = "backward"
+                    print("\r>> BACKWARD     ", end="", flush=True)
+                elif char == 'x' or char == ' ':
                     current_direction = "stop"
                     print("\r>> STOP         ", end="", flush=True)
                 elif char == 'r':
@@ -126,6 +132,8 @@ def keyboard_listener():
             elif cmd == 'd':
                 current_direction = "right"
             elif cmd == 's':
+                current_direction = "backward"
+            elif cmd == 'x':
                 current_direction = "stop"
             elif cmd == 'r':
                 reset_position = True
@@ -150,16 +158,28 @@ def main():
     model = CityWalkerWrapper()
 
     print("\n[2] Connecting to robot...")
-    rover = EarthRoverInterface()
+    print("    Make sure:")
+    print("    1. SDK server is running (hypercorn main:app)")
+    print("    2. Browser is open at http://localhost:8000/sdk")
+    print("    3. Wait 5 seconds for data to flow")
+    rover = EarthRoverInterface(timeout=10.0)
     if not rover.connect():
-        print("FAILED - Is SDK server running?")
+        print("FAILED - Check SDK server and browser")
         return
 
     print("\n[3] Initializing Visual Odometry...")
     vo = VisualOdometry(image_size=(640, 480), scale=0.05)
     print("    Scale factor: 0.05 (tune if needed)")
 
-    controller = PDController()
+    # Tuned gains for smooth, slower movement
+    controller = PDController(
+        kp_linear=0.5,    # Gentler forward response
+        kd_linear=0.05,
+        kp_angular=1.0,   # Responsive turning
+        kd_angular=0.1,
+        max_linear=0.3,   # SLOWER max speed (was 0.5)
+        max_angular=0.4   # SLOWER turning (was 0.6)
+    )
 
     # Image buffer
     image_buffer = []
@@ -228,23 +248,26 @@ def main():
 
             # Get coordinates for CityWalker (uses real position history)
             coords = vo.get_coordinates_for_citywalker(target_x, target_y)
+            
+            # DEBUG: Show target in robot frame (last row of coords is target)
+            target_robot_frame = coords[5]  # Index 5 is the target
 
-            # Run model
+            # Run model with proper normalization (step_scale=0.3m from training data)
             images = np.stack(image_buffer, axis=0)
-            waypoints, arrival_prob = model.predict(images, coords, step_length=1.0)
+            waypoints, arrival_prob = model.predict(images, coords, step_scale=0.3)
 
-            # Get first waypoint
+            # Get first waypoint (in robot frame: X=forward, Y=left)
             wp = waypoints[0]
-
-            # Compute velocities (don't reset controller - need derivative history for D term)
+            
+            # Compute velocities from waypoint
             linear, angular = controller.compute(wp[0], wp[1])
-
-            # Apply with some forward bias
-            safe_linear = max(linear * 0.5, 0.15)  # At least 15% forward
-            safe_angular = angular * 0.5
+            
+            # DEBUG: Print everything
+            print(f"\r   Dir:{current_direction:7s} Target:({target_robot_frame[0]:+.2f},{target_robot_frame[1]:+.2f}) "
+                  f"WP:({wp[0]:+.2f},{wp[1]:+.2f}) -> L:{linear:+.2f} A:{angular:+.2f}   ", end="", flush=True)
 
             # Send to robot
-            rover.send_control(safe_linear, safe_angular)
+            rover.send_control(linear, angular)
 
             time.sleep(0.05)
 

@@ -1,0 +1,348 @@
+================================================================================
+                    TESTING GUIDE
+                    Step-by-Step Instructions for Testing Robot
+================================================================================
+
+After connecting robot to new WiFi, follow these steps to test:
+
+================================================================================
+STEP 1: SETUP ENVIRONMENT VARIABLES
+================================================================================
+
+1. Navigate to earth-rovers-sdk directory:
+   cd earth-rovers-sdk
+
+2. Create or edit .env file:
+   nano .env
+   (or use any text editor)
+
+3. Add your credentials:
+   SDK_API_TOKEN=your_api_token_here
+   BOT_SLUG=your_bot_slug_here
+   CHROME_EXECUTABLE_PATH=/usr/bin/google-chrome
+   MAP_ZOOM_LEVEL=18
+   IMAGE_QUALITY=0.8
+   IMAGE_FORMAT=jpeg
+
+4. Save the file (Ctrl+X, then Y, then Enter in nano)
+
+IMPORTANT:
+  - Get SDK_API_TOKEN from: https://my.frodobots.com/owner/settings
+  - BOT_SLUG is your robot's name/slug
+  - Make sure robot is powered ON and connected to WiFi
+
+
+================================================================================
+STEP 2: START THE SDK SERVER
+================================================================================
+
+1. Make sure you're in the earth-rovers-sdk directory:
+   cd /home/vivek/Desktop/rover/earth-rovers-sdk
+
+2. Activate conda environment (if not already active):
+   conda activate rover
+
+3. Install SDK dependencies (if not already installed):
+   pip install -r requirements.txt
+
+4. Start the SDK server:
+   hypercorn main:app --reload
+
+5. You should see output like:
+   INFO:     Started server process
+   INFO:     Waiting for application startup.
+   INFO:     Application startup complete.
+   INFO:     Uvicorn running on http://127.0.0.1:8000
+
+6. Keep this terminal open! The server must keep running.
+
+7. Test in browser (optional):
+   Open: http://localhost:8000
+   You should see the robot's live camera feed
+
+
+================================================================================
+STEP 3: TEST CONNECTION (In a NEW Terminal)
+================================================================================
+
+Open a NEW terminal window (keep SDK server running in first terminal).
+
+1. Navigate to project directory:
+   cd /home/vivek/Desktop/rover
+
+2. Activate conda environment:
+   conda activate rover
+
+3. Test basic connection:
+   python -c "
+   import sys
+   sys.path.insert(0, 'src')
+   from earthrover_interface import EarthRoverInterface
+   
+   rover = EarthRoverInterface()
+   if rover.connect():
+       print('✅ Connection successful!')
+       data = rover.get_data()
+       print(f'Battery: {data.get(\"battery\")}%')
+       print(f'GPS: ({data.get(\"latitude\")}, {data.get(\"longitude\")})')
+   else:
+       print('❌ Connection failed!')
+       print('Make sure SDK server is running in another terminal.')
+   "
+
+Expected output:
+  ✅ Connection successful!
+  Battery: 85%
+  GPS: (40.7580, -73.9855)
+
+
+================================================================================
+STEP 4: TEST CAMERA (No Movement)
+================================================================================
+
+This test checks if camera works and model can make predictions WITHOUT moving robot.
+
+1. In the same terminal (where SDK server is NOT running):
+   python scripts/test_live.py --no-move --steps 10
+
+Expected output:
+  ============================================================
+  LIVE TEST - CityWalker on EarthRover
+  ============================================================
+  
+  [1] Loading model...
+      Model loaded in 2.1s
+  
+  [2] Connecting to robot...
+  Connected to EarthRover SDK at http://localhost:8000
+    Battery: 85%
+    GPS: (40.7580, -73.9855)
+    Orientation: 90.0
+  
+  [3] Starting live test...
+      Move robot: False
+      Steps: 10
+  ------------------------------------------------------------
+  Step  1: Buffering... (1/5 frames)
+  Step  2: Buffering... (2/5 frames)
+  Step  3: Buffering... (3/5 frames)
+  Step  4: Buffering... (4/5 frames)
+  Step  5: waypoint=(+0.123, -0.034)  vel=(+0.25, -0.17)  arrived=0.15  infer=165ms  fps=6.0
+  Step  6: waypoint=(+0.118, -0.029)  vel=(+0.24, -0.15)  arrived=0.16  infer=162ms  fps=6.1
+  ...
+
+If you see this, camera and model are working! ✅
+
+
+================================================================================
+STEP 5: TEST WITH MOVEMENT (CAREFUL!)
+================================================================================
+
+⚠️  WARNING: Robot will move! Make sure:
+  - Clear space around robot (at least 2m x 2m)
+  - No obstacles or people nearby
+  - Robot is on flat surface
+  - You can stop it quickly (Ctrl+C)
+
+1. Test with small movements:
+   python scripts/test_live.py --steps 5
+
+   This will:
+   - Capture camera frames
+   - Run CityWalker model
+   - Send motor commands to robot
+   - Robot will move slightly
+
+2. Watch the robot carefully!
+
+3. To stop: Press Ctrl+C
+
+Expected output:
+  Step  5: waypoint=(+0.123, -0.034)  vel=(+0.25, -0.17)  arrived=0.15  infer=165ms  fps=6.0
+  (Robot moves forward slightly)
+
+If robot moves, everything is working! ✅
+
+
+================================================================================
+STEP 6: TEST INDOOR NAVIGATION (Semi-Autonomous)
+================================================================================
+
+This mode lets YOU control direction, robot handles obstacle avoidance.
+
+⚠️  WARNING: Robot will move! Clear space required.
+
+1. Run indoor navigation:
+   python scripts/indoor_nav.py
+
+2. Controls:
+   W = Forward
+   A = Turn Left
+   D = Turn Right
+   S = Stop
+   R = Reset position
+   Q = Quit
+
+3. Test sequence:
+   a) Press 'W' → Robot should move forward
+   b) Press 'A' → Robot should turn left
+   c) Press 'D' → Robot should turn right
+   d) Press 'S' → Robot should stop
+   e) Press 'Q' → Exit
+
+Expected output:
+  ============================================================
+  INDOOR NAVIGATION - Visual Odometry + CityWalker
+  ============================================================
+  
+  [1] Loading CityWalker model...
+  [2] Connecting to robot...
+  Connected to EarthRover SDK at http://localhost:8000
+  [3] Initializing Visual Odometry...
+  [4] Starting navigation...
+      Use W/A/S/D to control, R to reset, Q to quit
+  ------------------------------------------------------------
+     Pos: (+0.05, +0.01)  Heading: +2deg  Matches: 156  Dir: forward
+
+
+================================================================================
+STEP 7: TEST AUTONOMOUS NAVIGATION (Full Auto)
+================================================================================
+
+This mode: Give target position, robot navigates there alone.
+
+⚠️  WARNING: Robot will move autonomously! Large clear space required.
+
+1. Run autonomous navigation:
+   python scripts/autonomous_nav.py --target 1.0 0.0
+
+   This tells robot: "Go 1 meter forward, 0 meters left"
+
+2. Watch robot navigate!
+
+3. Robot will:
+   - Track its position using visual odometry
+   - Predict waypoints using CityWalker
+   - Navigate to target
+   - Stop when it thinks it arrived
+
+4. To stop early: Press Ctrl+C
+
+Expected output:
+  ============================================================
+  AUTONOMOUS INDOOR NAVIGATION
+  ============================================================
+  
+  [1] Loading CityWalker model...
+  [2] Connecting to robot...
+  [3] Initializing Visual Odometry...
+  [4] Initializing controller...
+  
+  Target set: (1.00, 0.00) meters
+  
+  ============================================================
+  Navigating to (1.00, 0.00)
+  Timeout: 120 seconds
+  ============================================================
+  
+  Pos: (+0.12, +0.01)  Dist: 0.88m  Vel: (0.25, -0.05)  Time: 5s
+  Pos: (+0.25, +0.02)  Dist: 0.75m  Vel: (0.28, -0.03)  Time: 10s
+  ...
+  
+  ============================================================
+  TARGET REACHED!
+  Final position: (0.98, 0.03)
+  Time taken: 18.5 seconds
+  ============================================================
+
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+PROBLEM: "Cannot connect to SDK server"
+SOLUTION:
+  1. Make sure SDK server is running (Step 2)
+  2. Check .env file has correct credentials
+  3. Verify robot is powered ON
+  4. Check robot is connected to WiFi
+  5. Try: curl http://localhost:8000/data
+
+PROBLEM: "No camera frame received"
+SOLUTION:
+  1. Check robot camera is working: http://localhost:8000
+  2. Verify IMAGE_QUALITY and IMAGE_FORMAT in .env
+  3. Check internet connection (robot needs internet)
+
+PROBLEM: "Model loading failed"
+SOLUTION:
+  1. Check model file exists: ls models/CityWalker_2000hr.ckpt
+  2. Verify CUDA is available: python -c "import torch; print(torch.cuda.is_available())"
+  3. Check conda environment is activated
+
+PROBLEM: "Robot doesn't move"
+SOLUTION:
+  1. Check motor commands are being sent (look at output)
+  2. Verify robot battery is charged
+  3. Try manual control: curl -X POST http://localhost:8000/control \
+     -H "Content-Type: application/json" \
+     -d '{"command": {"linear": 0.3, "angular": 0.0, "lamp": 0}}'
+
+PROBLEM: "Position drifts a lot"
+SOLUTION:
+  1. Press 'R' to reset position (in indoor_nav.py)
+  2. Move slower (fast motion = blur = bad tracking)
+  3. Ensure good lighting
+  4. Adjust scale parameter in VisualOdometry (default 0.05)
+
+PROBLEM: "Robot hits obstacles"
+SOLUTION:
+  1. CityWalker was trained outdoors, may miss some indoor obstacles
+  2. Reduce speed: Edit scripts, reduce linear velocity scaling
+  3. Ensure good lighting for camera
+  4. Use larger clear space for testing
+
+
+================================================================================
+QUICK TEST COMMANDS SUMMARY
+================================================================================
+
+# Terminal 1: Start SDK Server
+cd earth-rovers-sdk
+conda activate rover
+hypercorn main:app --reload
+
+# Terminal 2: Test Connection
+cd /home/vivek/Desktop/rover
+conda activate rover
+python scripts/test_live.py --no-move --steps 5
+
+# Terminal 2: Test with Movement (CAREFUL!)
+python scripts/test_live.py --steps 5
+
+# Terminal 2: Test Indoor Navigation
+python scripts/indoor_nav.py
+
+# Terminal 2: Test Autonomous Navigation
+python scripts/autonomous_nav.py --target 1.0 0.0
+
+
+================================================================================
+SAFETY CHECKLIST
+================================================================================
+
+Before testing with movement:
+  ☐ Clear space (at least 2m x 2m)
+  ☐ No obstacles nearby
+  ☐ No people or pets in area
+  ☐ Robot on flat surface
+  ☐ Battery charged (>50%)
+  ☐ Know how to stop (Ctrl+C)
+  ☐ SDK server running
+  ☐ Connection tested
+  ☐ Camera working
+
+
+================================================================================
+END OF TESTING GUIDE
+================================================================================
