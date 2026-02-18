@@ -28,27 +28,74 @@ rover/
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/vivekmattam02/citywalker-earthrover.git
-cd citywalker-earthrover
+git clone <YOUR_REPO_URL>   # e.g. https://github.com/yourusername/rover.git
+cd rover
 ```
 
-### 2. Download pretrained model
-```bash
-mkdir -p models
-wget -O models/CityWalker_2000hr.ckpt \
-  "https://github.com/ai4ce/CityWalker/releases/download/v1.0/CityWalker_2000hr.ckpt"
-```
-
-### 3. Create environment
+### 2. Create conda environment
 ```bash
 conda env create -f environment.yml
 conda activate rover
 ```
 
-### 4. Verify installation
+### 3. Download pretrained model (for CityWalker / outdoor nav)
+```bash
+mkdir -p models
+wget -O models/CityWalker_2000hr.ckpt \
+  "https://github.com/ai4ce/CityWalker/releases/download/v1.0/CityWalker_2000hr.ckpt"
+```
+*(Skip this if you only want to run Bug2 indoor exploration — that script doesn’t use CityWalker.)*
+
+### 4. Configure the robot (SDK)
+The SDK loads `.env` from **earth-rovers-sdk/** when you start the server. Create it there:
+
+```bash
+cp earth-rovers-sdk/.env.sample earth-rovers-sdk/.env
+# Edit earth-rovers-sdk/.env and set:
+# SDK_API_TOKEN=<your FrodoBots SDK token for this robot>
+# BOT_SLUG=<your robot slug, e.g. jack-drax-hinge>
+```
+
+Minimum required in `earth-rovers-sdk/.env`:
+```
+SDK_API_TOKEN=your_token_here
+BOT_SLUG=your_bot_slug_here
+```
+
+Get `SDK_API_TOKEN` and `BOT_SLUG` from the FrodoBots dashboard for your robot.
+
+### 5. Verify installation
 ```bash
 python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}')"
 ```
+
+---
+
+## Run a demo (after setup)
+
+1. **Start the SDK server** (one terminal, leave it running):
+   ```bash
+   cd earth-rovers-sdk && hypercorn main:app --reload
+   ```
+
+2. **Open the browser**: go to **http://localhost:8000/sdk** in Chrome. Wait until you see live video and sensor data.
+
+3. **Run a script** (another terminal, from project root):
+   ```bash
+   conda activate rover
+   cd /path/to/rover
+
+   # Indoor exploration (Bug2, no CityWalker, no GPS):
+   python scripts/autonomous_exploration.py
+
+   # Outdoor GPS + CityWalker:
+   python scripts/outdoor_nav.py --target-lat <LAT> --target-lon <LON>
+
+   # Indoor with keyboard + CityWalker:
+   python scripts/indoor_nav.py
+   ```
+
+The browser tab must stay open and connected so the robot stream and commands work.
 
 ## Architecture
 

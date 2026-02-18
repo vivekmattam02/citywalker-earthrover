@@ -73,18 +73,34 @@ class OutdoorNavigator:
             max_angular=0.7
         )
 
+        # Waypoint selection for control
+        # CityWalker predicts 5 waypoints at 5Hz (0, 0.2s, 0.4s, 0.6s, 0.8s, 1.0s ahead)
+        # Using a farther waypoint gives better lookahead for GPS-based navigation
+        self.waypoint_index = 2  # Use 3rd waypoint (0.4s ahead, ~1-2m for walking speed)
+
+        # GPS-specific adaptations for CityWalker
+        self.waypoint_scale_factor = 3.0  # Scale CityWalker waypoints by 3x
+        self.use_intermediate_goals = False  # DISABLED - causing target to jump around
+
+        # NO GPS smoothing - CoordinateTransformer already handles history
+        # Smoothing was creating artificial positions that confused the transformer
+
         # Image buffer for CityWalker (needs 5 frames)
         self.image_buffer = []
 
         # Navigation state
         self.target_lat = None
         self.target_lon = None
-        self.goal_tolerance = 2.0  # meters - GPS accuracy is ~2-5m
+        self.goal_tolerance = 1.0  # meters - tighter for short distances
 
-        # Stuck detection
-        self.stuck_threshold = 30
+        # Stuck detection — DISABLED for outdoor GPS navigation
+        # GPS jitter (±2-5m) causes too many false positives
+        # If you want stuck detection, increase threshold to 100+ steps
+        self.enable_stuck_detection = False
+        self.stuck_threshold = 100  # ~10 seconds at 10Hz
         self.stuck_counter = 0
         self.last_distance = float('inf')
+        self.min_progress = 1.0  # meters — must move at least this much to count as progress
         
         # Heading filter (GPS heading is very noisy)
         self.heading_history = []
@@ -155,6 +171,14 @@ class OutdoorNavigator:
 
         self.rover.stop()
         self.stuck_counter = 0
+        self.last_distance = float('inf')
+
+        # Reset PD controller — stale derivative from before recovery would cause a spike
+        self.controller.reset()
+
+        # Clear image buffer — frames from before recovery are facing wrong direction
+        self.image_buffer.clear()
+
         print("    Recovery complete, resuming navigation")
 
     def navigate_step(self) -> dict:
@@ -170,27 +194,33 @@ class OutdoorNavigator:
         # Get camera frame
         frame = self.rover.get_camera_frame()
         if frame is None:
+            self.rover.stop()  # Safety: don't run stale command
             return {'success': False, 'reason': 'no_frame'}
 
         # Get GPS position
         try:
             lat, lon, raw_heading_rad = self.rover.get_pose()  # get_pose already returns radians!
-            
+
+            if lat is None or lon is None:
+                self.rover.stop()
+                return {'success': False, 'reason': 'no_gps'}
+
             # Filter the heading (GPS heading is VERY noisy)
             if raw_heading_rad is not None:
                 self.heading_history.append(raw_heading_rad)
                 if len(self.heading_history) > self.heading_filter_size:
                     self.heading_history.pop(0)
-                
+
                 # Average the headings (handle wrap-around using sin/cos)
                 sin_sum = sum(np.sin(h) for h in self.heading_history)
                 cos_sum = sum(np.cos(h) for h in self.heading_history)
                 heading_rad = np.arctan2(sin_sum, cos_sum)
             else:
                 heading_rad = 0.0
-            
+
             heading_deg = np.degrees(heading_rad)  # For display only
         except Exception as e:
+            self.rover.stop()  # Safety: don't run stale command
             return {'success': False, 'reason': f'gps_error: {e}'}
 
         # Update coordinate transformer
@@ -228,59 +258,72 @@ class OutdoorNavigator:
                 'distance': distance
             }
 
-        # Check for stuck condition
-        if distance >= self.last_distance - 0.1:  # Not making progress
-            self.stuck_counter += 1
-        else:
-            self.stuck_counter = 0
-        self.last_distance = distance
+        # Check for stuck condition (only if enabled)
+        if self.enable_stuck_detection:
+            if distance >= self.last_distance - self.min_progress:
+                self.stuck_counter += 1
+            else:
+                self.stuck_counter = 0
+            self.last_distance = distance
 
-        if self.is_stuck():
-            self.recover_from_stuck()
-            return {
-                'success': True,
-                'recovering': True,
-                'position': (lat, lon)
-            }
+            if self.is_stuck():
+                self.recover_from_stuck()
+                return {
+                    'success': True,
+                    'recovering': True,
+                    'position': (lat, lon)
+                }
 
         # Get coordinates for CityWalker (in robot's local frame)
         coords = self.transformer.get_model_input(self.target_lat, self.target_lon)
-        target_coord = coords[5]  # Last one is target
+        target_coord = coords[5]  # Last one is target (in robot frame)
 
-        # Run model with proper normalization (step_scale=0.3m from training)
-        images = np.stack(self.image_buffer, axis=0)
-        waypoints, arrival_prob = self.model.predict(images, coords, step_scale=0.3)
+        # Run CityWalker model inference
+        try:
+            images = np.stack(self.image_buffer, axis=0)
+            waypoints, arrival_prob = self.model.predict(images, coords, step_scale=0.3)
+        except Exception as e:
+            self.rover.stop()
+            return {'success': False, 'reason': f'model_error: {e}'}
 
-        # Get first waypoint from CityWalker
-        wp = waypoints[0]
-        
-        # CityWalker waypoints are very small (centimeters) but direction is correct
-        # Use the TARGET direction to drive, modulated by CityWalker's suggestion
-        
-        # Target direction (in robot frame)
-        target_x, target_y = target_coord[0], target_coord[1]
-        target_angle = np.arctan2(target_y, target_x)  # Angle to target
-        
-        # CityWalker waypoint direction
-        wp_angle = np.arctan2(wp[1], wp[0]) if (abs(wp[0]) > 0.001 or abs(wp[1]) > 0.001) else 0
-        
-        # Blend: mostly follow target, but let CityWalker adjust for obstacles
-        # If CityWalker says "go left" relative to target, we turn left a bit
-        angle_diff = wp_angle - target_angle  # How much CityWalker deviates from direct path
-        
-        # Angular velocity: turn toward target, with CityWalker adjustment
-        angular = -target_angle * 1.5 + angle_diff * 0.5  # Negative because positive Y is left
+        # SIMPLE APPROACH: Go directly to target, use CityWalker only for small corrections
+        #
+        # The target position keeps changing because GPS history is noisy.
+        # CityWalker is predicting reasonable waypoints but they're too small.
+        #
+        # Solution: Go mostly toward target, blend in CityWalker for obstacle avoidance
+
+        # Scaled CityWalker waypoint
+        cw_wp = waypoints[self.waypoint_index] * self.waypoint_scale_factor
+
+        # Target direction (from coords - in robot frame)
+        target_wp = target_coord
+
+        # MOSTLY use target direction, CityWalker adds small corrections
+        # This keeps robot going toward goal while CityWalker handles obstacles
+        if distance > 2.0:
+            # Far: 90% target, 10% CityWalker
+            wp = 0.9 * target_wp + 0.1 * cw_wp
+        else:
+            # Close: 70% target, 30% CityWalker
+            wp = 0.7 * target_wp + 0.3 * cw_wp
+
+        linear, angular = self.controller.compute(wp[0], wp[1])
+
+        # Store for debugging
+        citywalker_wp = cw_wp
+
+        # Clip to safe outdoor speeds (no reverse)
+        linear = np.clip(linear, 0.0, 0.7)
         angular = np.clip(angular, -0.7, 0.7)
-        
-        # Linear velocity: go forward if roughly facing the target
-        if abs(target_angle) < np.pi/2:  # Target is ahead
-            linear = 0.5  # Fixed forward speed
-        else:  # Target is behind
-            linear = 0.2  # Slow while turning
-            
-        # Reduce speed if turning hard
+
+        # Slow down if turning hard
         if abs(angular) > 0.4:
             linear *= 0.5
+
+        # Ensure minimum forward speed so robot doesn't crawl
+        if linear > 0.0:
+            linear = max(linear, 0.15)
 
         # Send to robot
         self.rover.send_control(linear, angular)
@@ -291,6 +334,7 @@ class OutdoorNavigator:
             'heading': heading_deg,
             'distance': distance,
             'target_local': (target_coord[0], target_coord[1]),
+            'citywalker_wp': (citywalker_wp[0], citywalker_wp[1]),
             'waypoint': (wp[0], wp[1]),
             'velocity': (linear, angular),
             'arrival_prob': arrival_prob
@@ -358,22 +402,25 @@ class OutdoorNavigator:
                     print(f"{'='*60}")
                     return True
 
-                # Print status
-                if step_count % 20 == 0:  # Every 20 steps (~1 second)
+                # Print status every ~1 second (10 steps at 10Hz)
+                if step_count % 10 == 0:
                     pos = status.get('position', (0, 0))
                     dist = status.get('distance', 0)
                     vel = status.get('velocity', (0, 0))
                     heading = status.get('heading', 0)
                     target = status.get('target_local', (0, 0))
                     wp = status.get('waypoint', (0, 0))
+                    cw_wp = status.get('citywalker_wp', (0, 0))
+                    arr = status.get('arrival_prob', 0)
                     print(f"\r[{elapsed:.0f}s] Dist: {dist:.1f}m | "
-                          f"Heading: {heading:.0f}° | "
-                          f"Target: ({target[0]:.1f}, {target[1]:.1f})m | "
+                          f"H: {heading:.0f}° | "
+                          f"Tgt: ({target[0]:.1f}, {target[1]:.1f})m | "
+                          f"CW: ({cw_wp[0]:.2f}, {cw_wp[1]:.2f})m | "
                           f"WP: ({wp[0]:.2f}, {wp[1]:.2f})m | "
-                          f"Vel: ({vel[0]:.2f}, {vel[1]:.2f})   ", end="", flush=True)
+                          f"V: ({vel[0]:.2f}, {vel[1]:.2f})   ", end="", flush=True)
 
-                # Small delay
-                time.sleep(0.05)
+                # 10Hz — model inference + GPS + frame fetch is heavy
+                time.sleep(0.1)
 
         except KeyboardInterrupt:
             print("\n\n[!] Navigation cancelled by user")

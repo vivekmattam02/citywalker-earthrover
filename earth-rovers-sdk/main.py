@@ -508,13 +508,16 @@ async def get_control():
     """Get pending control command (JavaScript polls this)"""
     global pending_control
     import time
-    # Only return command if it's fresh (< 0.5 seconds old)
-    if pending_control.get("command") and pending_control.get("timestamp", 0) > time.time() - 0.5:
+    
+    # Return the LAST command if it's not too old (2 seconds)
+    # DON'T clear it - let robot keep executing until new command arrives
+    if pending_control.get("command") and pending_control.get("timestamp", 0) > time.time() - 2.0:
         cmd = pending_control["command"]
-        # Clear the command after retrieving
-        pending_control = {"command": None, "timestamp": 0}
+        # DO NOT clear - keep sending same command until Python sends a new one
         return JSONResponse(content={"command": cmd})
-    return JSONResponse(content={"command": None})
+    
+    # If command is stale (>2 seconds), send stop for safety
+    return JSONResponse(content={"command": {"linear": 0.0, "angular": 0.0, "lamp": 0}})
 
 
 @app.post("/checkpoint-reached")

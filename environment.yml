@@ -35,3 +35,5 @@ dependencies:
       # Integration dependencies
       - Pillow
       - geopy
+      # ROS2 build dependencies
+      - catkin_pkg

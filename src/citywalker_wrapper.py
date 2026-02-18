@@ -7,7 +7,7 @@ Usage:
     from citywalker_wrapper import CityWalkerWrapper
 
     wrapper = CityWalkerWrapper()
-    waypoints, arrived = wrapper.predict(images, coordinates)
+    waypoints, arrived = wrapper.predict(images, coordinates, step_scale=1.0)
 """
 
 import sys
@@ -42,6 +42,13 @@ class CityWalkerWrapper:
     Wrapper for CityWalker navigation model.
 
     Handles model loading, preprocessing, and inference.
+
+    From the CityWalker source code:
+    - Model internally applies ImageNet normalization (mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])
+    - Model internally center-crops to [350, 630] and resizes to [350, 630] (pretrained config)
+    - Input images just need to be 0-1 float tensors
+    - Coordinates are (6, 2): 5 past positions + 1 target, divided by step_scale
+    - Output waypoints are cumulative deltas in normalized space, multiply by step_scale for meters
     """
 
     def __init__(self, checkpoint_path=None, config_path=None, device=None):
@@ -83,44 +90,45 @@ class CityWalkerWrapper:
 
         print("Model loaded successfully!")
 
-    def predict(self, images, coordinates, step_scale=0.3):
+    def predict(self, images, coordinates, step_scale):
         """
         Run inference on the model.
 
         Args:
-            images: Camera frames. Can be:
-                - numpy array of shape (5, H, W, 3) - 5 RGB images, values 0-255
-                - torch tensor of shape (5, 3, H, W) - 5 RGB images, values 0-1
+            images: Camera frames as numpy array (5, H, W, 3), uint8 0-255.
+                    Model handles ImageNet normalization and crop/resize internally.
 
-            coordinates: Position coordinates. Can be:
-                - numpy array of shape (6, 2) - 5 past positions + 1 target
-                - torch tensor of shape (6, 2)
-                All positions are (x, y) in meters, relative to current robot position.
+            coordinates: Position coordinates as numpy array (6, 2).
+                        5 past positions + 1 target, in LOCAL METERS.
+                        These should already be transformed to robot frame
+                        (translated so current=origin, rotated so forward=+Y).
+                        NOT yet divided by step_scale (this function does that).
 
-            step_scale: The normalization scale (average step length from training data).
-                Default 0.3 meters (typical walking stride at 5Hz).
-                Input coords are divided by this, output waypoints are multiplied by this.
+            step_scale: Average distance between consecutive positions (meters).
+                       Computed from GPS trajectory: mean(||diff(positions)||).
+                       Used to normalize inputs and denormalize outputs.
+                       Typical values: 0.5-1.5m at 1Hz.
 
         Returns:
-            waypoints: numpy array of shape (5, 2) - 5 future (x, y) positions in METERS
-            arrived: float between 0 and 1 - probability that we've reached the goal
+            waypoints: numpy array (5, 2) - 5 future (x, y) positions in METERS
+            arrived: float 0-1 - probability that we've reached the goal
         """
-        # Convert images to tensor if needed
+        # Convert images to tensor
         if isinstance(images, np.ndarray):
-            # Assume (N, H, W, 3) with values 0-255
             images = torch.from_numpy(images).float()
             images = images.permute(0, 3, 1, 2)  # (N, H, W, 3) -> (N, 3, H, W)
-            images = images / 255.0  # Normalize to 0-1
+            images = images / 255.0  # To 0-1 (model applies ImageNet norm internally)
 
-        # Convert coordinates to tensor if needed
+        # Convert coordinates to tensor
         if isinstance(coordinates, np.ndarray):
             coordinates = torch.from_numpy(coordinates).float()
 
-        # NORMALIZE input coordinates (model was trained with normalized coords)
+        # Normalize coordinates by step_scale (model trained with normalized coords)
+        step_scale = max(step_scale, 0.01)  # Clamp to avoid division by zero
         coordinates = coordinates / step_scale
 
         # Add batch dimension
-        images = images.unsqueeze(0)  # (1, N, 3, H, W)
+        images = images.unsqueeze(0)        # (1, N, 3, H, W)
         coordinates = coordinates.unsqueeze(0)  # (1, 6, 2)
 
         # Move to device
@@ -131,9 +139,9 @@ class CityWalkerWrapper:
         with torch.no_grad():
             waypoints, arrival_logits, _, _ = self.model(images, coordinates, future_obs=None)
 
-        # Process outputs - DE-NORMALIZE waypoints to get meters
+        # Denormalize waypoints to get meters
         waypoints = waypoints[0].cpu().numpy()  # (5, 2)
-        waypoints = waypoints * step_scale  # Convert back to meters
+        waypoints = waypoints * step_scale
 
         arrival_prob = torch.sigmoid(arrival_logits[0]).item()  # Scalar 0-1
 
@@ -152,15 +160,14 @@ class CityWalkerWrapper:
 if __name__ == "__main__":
     print("Testing CityWalkerWrapper...")
 
-    # Create wrapper
     wrapper = CityWalkerWrapper()
 
     # Create dummy data
     dummy_images = np.random.randint(0, 255, (5, 480, 640, 3), dtype=np.uint8)
     dummy_coords = np.random.randn(6, 2).astype(np.float32)
 
-    # Run prediction
-    waypoints, arrived = wrapper.predict(dummy_images, dummy_coords)
+    # Run prediction with step_scale=1.0
+    waypoints, arrived = wrapper.predict(dummy_images, dummy_coords, step_scale=1.0)
 
     print(f"\nResults:")
     print(f"  Waypoints shape: {waypoints.shape}")
