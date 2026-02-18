@@ -7,9 +7,11 @@ REPO_CRUX.txt
 # Large model files
 models/*.ckpt
 
-# Personal notes (keep local)
+# Personal notes & session logs (keep local, never push)
 LEARNING.md
 NEXT_SESSION.txt
+WHAT_WENT_WRONG.md
+CONVERSATION_LOG.md
 models/*.pt
 models/*.pth
 *.ckpt
